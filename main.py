@@ -1,15 +1,19 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 import pickle
+import traceback
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing import image
 from PIL import Image
 import io
 
-app = FastAPI()
+# -----------------------------
+# App Initialization
+# -----------------------------
+app = FastAPI(title="Diatom Forensic API")
 
-# Allow Flutter app to call this API
+# Allow Flutter / Web access
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,11 +22,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load model and class names
-model = load_model("best_model.h5")
-with open("class_names.pkl", "rb") as f:
-    class_names = pickle.load(f)
+# -----------------------------
+# Load Model & Labels (ONCE)
+# -----------------------------
+try:
+    model = load_model("best_model.h5")
+    with open("class_names.pkl", "rb") as f:
+        class_names = pickle.load(f)
+    print("✅ Model and class names loaded successfully")
+except Exception as e:
+    print("❌ Error loading model or class names")
+    print(e)
+    raise e
 
+# -----------------------------
+# Species → Location Mapping
+# -----------------------------
 species_location_map = {
     "Sellaphora nigri": {
         "water_body": "Freshwater (River / Lake)",
@@ -38,34 +53,54 @@ species_location_map = {
     }
 }
 
-@app.post("/predict")
-async def predict(file: UploadFile = File(...)):
-    # Read image
-    contents = await file.read()
-    img = Image.open(io.BytesIO(contents))
-    img = img.resize((224, 224))
-    
-    # Preprocess
-    img_array = image.img_to_array(img)
-    img_array = img_array / 255.0
-    img_array = np.expand_dims(img_array, axis=0)
-    
-    # Predict
-    prediction = model.predict(img_array)
-    predicted_index = np.argmax(prediction)
-    predicted_species = class_names[predicted_index]
-    confidence = float(np.max(prediction) * 100)
-    
-    # Get location info
-    info = species_location_map.get(predicted_species, {})
-    
-    return {
-        "species": predicted_species,
-        "confidence": confidence,
-        "water_body": info.get("water_body", "Unknown"),
-        "region": info.get("region", "Unknown")
-    }
-
+# -----------------------------
+# Root Route (Health Check)
+# -----------------------------
 @app.get("/")
 def root():
-    return {"message": "Diatom Forensic API is running"}
+    return {"status": "Diatom Forensic API is running"}
+
+# -----------------------------
+# Prediction Route
+# -----------------------------
+@app.post("/predict")
+async def predict(file: UploadFile = File(...)):
+    try:
+        # Read uploaded image
+        contents = await file.read()
+
+        # 🔴 IMPORTANT FIX: FORCE RGB (3 channels)
+        img = Image.open(io.BytesIO(contents)).convert("RGB")
+        img = img.resize((224, 224))  # match model input size
+
+        # Preprocess image
+        img_array = image.img_to_array(img)
+        img_array = img_array / 255.0
+        img_array = np.expand_dims(img_array, axis=0)
+
+        # Run prediction
+        prediction = model.predict(img_array)
+        predicted_index = int(np.argmax(prediction))
+        confidence = float(np.max(prediction) * 100)
+
+        predicted_species = class_names[predicted_index]
+
+        # Location info
+        info = species_location_map.get(predicted_species, {})
+
+        return {
+            "species": predicted_species,
+            "confidence": confidence,
+            "water_body": info.get("water_body", "Unknown"),
+            "region": info.get("region", "Unknown")
+        }
+
+    except Exception as e:
+        # Print full error to Render logs
+        print("❌ Prediction Error")
+        print(traceback.format_exc())
+
+        raise HTTPException(
+            status_code=500,
+            detail="Prediction failed due to server error"
+        )
