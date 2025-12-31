@@ -25,71 +25,81 @@ app.add_middleware(
 # Load Model & Class Names
 # -----------------------------
 try:
-    model = load_model("best_model.h5")
+    model = load_model("best_model.h5", compile=False)
     with open("class_names.pkl", "rb") as f:
         class_names = pickle.load(f)
-    print("✅ Model and class names loaded")
+    print("✅ Model loaded")
+    print("✅ Number of classes:", len(class_names))
 except Exception as e:
-    print("❌ Error loading model")
+    print("❌ Error loading model or class names")
     raise e
 
 # -----------------------------
-# Genus-based Ecology (Telangana)
+# Genus-based Ecology with Telangana Reservoirs
 # -----------------------------
 genus_knowledge_map = {
     "Achnanthidium": {
         "type": "Small benthic freshwater diatom",
         "water_body": "Clean freshwater streams and tanks",
-        "region": "Hill streams, irrigation channels",
-        "indicator": "Good water quality"
+        "locations": ["Osmansagar Lake", "Himayatsagar Lake", "Durgam Cheruvu"],
+        "indicator": "Good water quality",
+        "pollution_level": "Low"
     },
     "Navicula": {
         "type": "Free-living freshwater diatom",
         "water_body": "Rivers, ponds, lake sediments",
-        "region": "Godavari basin, Musi river stretches, village tanks",
-        "indicator": "Normal freshwater environment"
+        "locations": ["Hussain Sagar Lake", "Lower Manair Dam", "Singur Dam"],
+        "indicator": "Normal freshwater environment",
+        "pollution_level": "Moderate"
     },
     "Nitzschia": {
         "type": "Pollution-tolerant freshwater diatom",
         "water_body": "Polluted rivers and urban lakes",
-        "region": "Urban drains, Musi downstream, industrial canals",
-        "indicator": "Organic pollution"
+        "locations": ["Musi River", "Hussain Sagar Lake", "Safilguda Lake"],
+        "indicator": "Organic pollution",
+        "pollution_level": "High"
     },
     "Gomphonema": {
         "type": "Attached freshwater diatom",
         "water_body": "Rivers and flowing streams",
-        "region": "Godavari tributaries, Manjeera river",
-        "indicator": "Moderate water quality"
+        "locations": ["Krishna River", "Godavari River", "Manjeera River"],
+        "indicator": "Moderate water quality",
+        "pollution_level": "Moderate"
     },
     "Fragilaria": {
         "type": "Chain-forming planktonic diatom",
         "water_body": "Lakes and reservoirs",
-        "region": "Hussain Sagar, Durgam Cheruvu, irrigation reservoirs",
-        "indicator": "Standing water"
+        "locations": ["Nizam Sagar", "Sriram Sagar Project (SRSP)", "Pakhal Lake"],
+        "indicator": "Standing water",
+        "pollution_level": "Low to Moderate"
     },
     "Cyclotella": {
         "type": "Planktonic centric diatom",
         "water_body": "Lakes and reservoirs",
-        "region": "Urban lakes, drinking water reservoirs",
-        "indicator": "Standing water"
+        "locations": ["Nagarjuna Sagar", "Lower Manair Dam", "Mid Manair Dam"],
+        "indicator": "Standing water",
+        "pollution_level": "Low to Moderate"
     },
     "Stephanodiscus": {
         "type": "Centric freshwater diatom",
         "water_body": "Nutrient-rich lakes",
-        "region": "Eutrophic urban lakes",
-        "indicator": "Eutrophic conditions"
+        "locations": ["Hussain Sagar Lake", "Fox Sagar Lake", "Mir Alam Tank"],
+        "indicator": "Eutrophic conditions",
+        "pollution_level": "High"
     },
     "Sellaphora": {
         "type": "Benthic sediment-dwelling diatom",
         "water_body": "River beds and lake sediments",
-        "region": "River bottoms, tank sediments",
-        "indicator": "Freshwater sediment"
+        "locations": ["Godavari River", "Krishna River", "Laknavaram Lake"],
+        "indicator": "Freshwater sediment",
+        "pollution_level": "Low to Moderate"
     },
     "Pinnularia": {
         "type": "Benthic freshwater diatom",
-        "water_body": "Ponds, wetlands, low-flow waters",
-        "region": "Village ponds, marshy tanks",
-        "indicator": "Low-flow freshwater"
+        "water_body": "Ponds and wetlands",
+        "locations": ["Shamirpet Lake", "Ameenpur Lake", "Ramappa Lake"],
+        "indicator": "Low-flow freshwater",
+        "pollution_level": "Low"
     }
 }
 
@@ -108,36 +118,47 @@ async def predict(file: UploadFile = File(...)):
     try:
         contents = await file.read()
 
-        # Force RGB
-        img = Image.open(io.BytesIO(contents)).convert("RGB")
-        img = img.resize((224, 224))
+        try:
+            img = Image.open(io.BytesIO(contents)).convert("RGB")
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail="Uploaded file is not a valid image"
+            )
 
-        # Preprocess
+        img = img.resize((256, 256))
         img_array = image.img_to_array(img)
         img_array = img_array / 255.0
         img_array = np.expand_dims(img_array, axis=0)
 
-        # Predict
         prediction = model.predict(img_array)
+
+        if prediction.shape[1] != len(class_names):
+            raise HTTPException(
+                status_code=500,
+                detail="Model output size does not match class names"
+            )
+
         predicted_index = int(np.argmax(prediction))
         confidence = float(np.max(prediction) * 100)
-
         predicted_species = class_names[predicted_index]
 
-        # -----------------------------
-        # Species → Genus → Telangana Ecology
-        # -----------------------------
+        # Extract genus and get ecological info
         genus = predicted_species.split(" ")[0]
-
         info = genus_knowledge_map.get(
             genus,
             {
                 "type": "Unknown diatom type",
                 "water_body": "Unknown freshwater body",
-                "region": "Unknown",
-                "indicator": "Unknown"
+                "locations": ["Various water bodies in Telangana"],
+                "indicator": "Unknown",
+                "pollution_level": "Unknown"
             }
         )
+
+        # Select primary location (first in list)
+        primary_location = info["locations"][0]
+        all_locations = ", ".join(info["locations"])
 
         return {
             "species": predicted_species,
@@ -145,16 +166,18 @@ async def predict(file: UploadFile = File(...)):
             "confidence": round(confidence, 2),
             "diatom_type": info["type"],
             "water_body": info["water_body"],
-            "region": info["region"],
-            "example_locations": info["examples"],
+            "region": primary_location,
+            "all_locations": all_locations,
+            "state": "Telangana, India",
             "ecological_indicator": info["indicator"],
-            "inference_note": "Location inferred based on diatom genus ecology within Telangana state"
+            "pollution_level": info["pollution_level"],
+            "inference_note": "Ecology inferred using genus-level knowledge from Telangana water bodies"
         }
 
+    except HTTPException as e:
+        raise e
     except Exception as e:
-        print("❌ Prediction Error")
-        print(traceback.format_exc())
-        raise HTTPException(
-            status_code=500,
-            detail="Prediction failed due to server error"
-        )
+        return {
+            "error": str(e),
+            "trace": traceback.format_exc()
+        }
