@@ -11,9 +11,8 @@ import io
 # -----------------------------
 # App Initialization
 # -----------------------------
-app = FastAPI(title="Diatom Forensic API")
+app = FastAPI(title="Diatom Forensic API - Telangana")
 
-# Allow Flutter / Web access
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,42 +22,92 @@ app.add_middleware(
 )
 
 # -----------------------------
-# Load Model & Labels (ONCE)
+# Load Model & Class Names
 # -----------------------------
 try:
     model = load_model("best_model.h5")
     with open("class_names.pkl", "rb") as f:
         class_names = pickle.load(f)
-    print("✅ Model and class names loaded successfully")
+    print("✅ Model and class names loaded")
 except Exception as e:
-    print("❌ Error loading model or class names")
-    print(e)
+    print("❌ Error loading model")
     raise e
 
 # -----------------------------
-# Species → Location Mapping
+# Genus-based Ecology (Telangana)
 # -----------------------------
-species_location_map = {
-    "Sellaphora nigri": {
-        "water_body": "Freshwater (River / Lake)",
-        "region": "Temperate freshwater regions"
+genus_knowledge_map = {
+    "Achnanthidium": {
+        "type": "Small benthic freshwater diatom",
+        "water_body": "Clean freshwater streams and tanks",
+        "region": "Telangana state, India",
+        "examples": "Hill streams, irrigation channels",
+        "indicator": "Good water quality"
     },
-    "Achnanthidium atomoides": {
-        "water_body": "Freshwater streams",
-        "region": "Europe / Similar regions"
+    "Navicula": {
+        "type": "Free-living freshwater diatom",
+        "water_body": "Rivers, ponds, lake sediments",
+        "region": "Telangana state, India",
+        "examples": "Godavari basin, Musi river stretches, village tanks",
+        "indicator": "Normal freshwater environment"
     },
-    "Navicula rostellata": {
-        "water_body": "Rivers and ponds",
-        "region": "Widespread freshwater regions"
+    "Nitzschia": {
+        "type": "Pollution-tolerant freshwater diatom",
+        "water_body": "Polluted rivers and urban lakes",
+        "region": "Telangana state, India",
+        "examples": "Urban drains, Musi downstream, industrial canals",
+        "indicator": "Organic pollution"
+    },
+    "Gomphonema": {
+        "type": "Attached freshwater diatom",
+        "water_body": "Rivers and flowing streams",
+        "region": "Telangana state, India",
+        "examples": "Godavari tributaries, Manjeera river",
+        "indicator": "Moderate water quality"
+    },
+    "Fragilaria": {
+        "type": "Chain-forming planktonic diatom",
+        "water_body": "Lakes and reservoirs",
+        "region": "Telangana state, India",
+        "examples": "Hussain Sagar, Durgam Cheruvu, irrigation reservoirs",
+        "indicator": "Standing water"
+    },
+    "Cyclotella": {
+        "type": "Planktonic centric diatom",
+        "water_body": "Lakes and reservoirs",
+        "region": "Telangana state, India",
+        "examples": "Urban lakes, drinking water reservoirs",
+        "indicator": "Standing water"
+    },
+    "Stephanodiscus": {
+        "type": "Centric freshwater diatom",
+        "water_body": "Nutrient-rich lakes",
+        "region": "Telangana state, India",
+        "examples": "Eutrophic urban lakes",
+        "indicator": "Eutrophic conditions"
+    },
+    "Sellaphora": {
+        "type": "Benthic sediment-dwelling diatom",
+        "water_body": "River beds and lake sediments",
+        "region": "Telangana state, India",
+        "examples": "River bottoms, tank sediments",
+        "indicator": "Freshwater sediment"
+    },
+    "Pinnularia": {
+        "type": "Benthic freshwater diatom",
+        "water_body": "Ponds, wetlands, low-flow waters",
+        "region": "Telangana state, India",
+        "examples": "Village ponds, marshy tanks",
+        "indicator": "Low-flow freshwater"
     }
 }
 
 # -----------------------------
-# Root Route (Health Check)
+# Root Route
 # -----------------------------
 @app.get("/")
 def root():
-    return {"status": "Diatom Forensic API is running"}
+    return {"status": "Diatom Forensic API (Telangana) is running"}
 
 # -----------------------------
 # Prediction Route
@@ -66,40 +115,55 @@ def root():
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
     try:
-        # Read uploaded image
         contents = await file.read()
 
-        # 🔴 IMPORTANT FIX: FORCE RGB (3 channels)
+        # Force RGB
         img = Image.open(io.BytesIO(contents)).convert("RGB")
-        img = img.resize((224, 224))  # match model input size
+        img = img.resize((224, 224))
 
-        # Preprocess image
+        # Preprocess
         img_array = image.img_to_array(img)
         img_array = img_array / 255.0
         img_array = np.expand_dims(img_array, axis=0)
 
-        # Run prediction
+        # Predict
         prediction = model.predict(img_array)
         predicted_index = int(np.argmax(prediction))
         confidence = float(np.max(prediction) * 100)
 
         predicted_species = class_names[predicted_index]
 
-        # Location info
-        info = species_location_map.get(predicted_species, {})
+        # -----------------------------
+        # Species → Genus → Telangana Ecology
+        # -----------------------------
+        genus = predicted_species.split(" ")[0]
+
+        info = genus_knowledge_map.get(
+            genus,
+            {
+                "type": "Unknown diatom type",
+                "water_body": "Unknown freshwater body",
+                "region": "Telangana state, India",
+                "examples": "Unknown",
+                "indicator": "Unknown"
+            }
+        )
 
         return {
             "species": predicted_species,
-            "confidence": confidence,
-            "water_body": info.get("water_body", "Unknown"),
-            "region": info.get("region", "Unknown")
+            "genus": genus,
+            "confidence": round(confidence, 2),
+            "diatom_type": info["type"],
+            "water_body": info["water_body"],
+            "region": info["region"],
+            "example_locations": info["examples"],
+            "ecological_indicator": info["indicator"],
+            "inference_note": "Location inferred based on diatom genus ecology within Telangana state"
         }
 
     except Exception as e:
-        # Print full error to Render logs
         print("❌ Prediction Error")
         print(traceback.format_exc())
-
         raise HTTPException(
             status_code=500,
             detail="Prediction failed due to server error"
