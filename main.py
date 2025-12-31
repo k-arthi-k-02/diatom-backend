@@ -40,64 +40,55 @@ genus_knowledge_map = {
     "Achnanthidium": {
         "type": "Small benthic freshwater diatom",
         "water_body": "Clean freshwater streams and tanks",
-        "region": "Telangana state, India",
-        "examples": "Hill streams, irrigation channels",
+        "region": "Hill streams, irrigation channels",
         "indicator": "Good water quality"
     },
     "Navicula": {
         "type": "Free-living freshwater diatom",
         "water_body": "Rivers, ponds, lake sediments",
-        "region": "Telangana state, India",
-        "examples": "Godavari basin, Musi river stretches, village tanks",
+        "region": "Godavari basin, Musi river stretches, village tanks",
         "indicator": "Normal freshwater environment"
     },
     "Nitzschia": {
         "type": "Pollution-tolerant freshwater diatom",
         "water_body": "Polluted rivers and urban lakes",
-        "region": "Telangana state, India",
-        "examples": "Urban drains, Musi downstream, industrial canals",
+        "region": "Urban drains, Musi downstream, industrial canals",
         "indicator": "Organic pollution"
     },
     "Gomphonema": {
         "type": "Attached freshwater diatom",
         "water_body": "Rivers and flowing streams",
-        "region": "Telangana state, India",
-        "examples": "Godavari tributaries, Manjeera river",
+        "region": "Godavari tributaries, Manjeera river",
         "indicator": "Moderate water quality"
     },
     "Fragilaria": {
         "type": "Chain-forming planktonic diatom",
         "water_body": "Lakes and reservoirs",
-        "region": "Telangana state, India",
-        "examples": "Hussain Sagar, Durgam Cheruvu, irrigation reservoirs",
+        "region": "Hussain Sagar, Durgam Cheruvu, irrigation reservoirs",
         "indicator": "Standing water"
     },
     "Cyclotella": {
         "type": "Planktonic centric diatom",
         "water_body": "Lakes and reservoirs",
-        "region": "Telangana state, India",
-        "examples": "Urban lakes, drinking water reservoirs",
+        "region": "Urban lakes, drinking water reservoirs",
         "indicator": "Standing water"
     },
     "Stephanodiscus": {
         "type": "Centric freshwater diatom",
         "water_body": "Nutrient-rich lakes",
-        "region": "Telangana state, India",
-        "examples": "Eutrophic urban lakes",
+        "region": "Eutrophic urban lakes",
         "indicator": "Eutrophic conditions"
     },
     "Sellaphora": {
         "type": "Benthic sediment-dwelling diatom",
         "water_body": "River beds and lake sediments",
-        "region": "Telangana state, India",
-        "examples": "River bottoms, tank sediments",
+        "region": "River bottoms, tank sediments",
         "indicator": "Freshwater sediment"
     },
     "Pinnularia": {
         "type": "Benthic freshwater diatom",
         "water_body": "Ponds, wetlands, low-flow waters",
-        "region": "Telangana state, India",
-        "examples": "Village ponds, marshy tanks",
+        "region": "Village ponds, marshy tanks",
         "indicator": "Low-flow freshwater"
     }
 }
@@ -143,8 +134,7 @@ async def predict(file: UploadFile = File(...)):
             {
                 "type": "Unknown diatom type",
                 "water_body": "Unknown freshwater body",
-                "region": "Telangana state, India",
-                "examples": "Unknown",
+                "region": "Unknown",
                 "indicator": "Unknown"
             }
         )
