@@ -28,10 +28,12 @@ try:
     model = load_model("best_model.h5", compile=False)
     with open("class_names.pkl", "rb") as f:
         class_names = pickle.load(f)
-    print("✅ Model loaded")
+    print("✅ Model loaded successfully")
     print("✅ Number of classes:", len(class_names))
+    print("✅ Model input shape:", model.input_shape)
 except Exception as e:
     print("❌ Error loading model or class names")
+    print(f"Error details: {str(e)}")
     raise e
 
 # -----------------------------
@@ -108,7 +110,23 @@ genus_knowledge_map = {
 # -----------------------------
 @app.get("/")
 def root():
-    return {"status": "Diatom Forensic API (Telangana) is running"}
+    return {
+        "status": "Diatom Forensic API (Telangana) is running",
+        "version": "1.0.0",
+        "model_input_shape": str(model.input_shape),
+        "total_classes": len(class_names)
+    }
+
+# -----------------------------
+# Health Check Route
+# -----------------------------
+@app.get("/health")
+def health_check():
+    return {
+        "status": "healthy",
+        "model_loaded": model is not None,
+        "classes_loaded": len(class_names) > 0
+    }
 
 # -----------------------------
 # Prediction Route
@@ -116,35 +134,51 @@ def root():
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
     try:
+        # Read file contents
         contents = await file.read()
-
+        
+        # Validate file is an image
         try:
             img = Image.open(io.BytesIO(contents)).convert("RGB")
-        except Exception:
+        except Exception as img_error:
             raise HTTPException(
                 status_code=400,
-                detail="Uploaded file is not a valid image"
+                detail=f"Uploaded file is not a valid image. Error: {str(img_error)}"
             )
-
-        img = img.resize((256, 256))
+        
+        # CRITICAL: Resize to 224x224 to match model training size
+        print(f"Original image size: {img.size}")
+        img = img.resize((224, 224))
+        print(f"Resized image size: {img.size}")
+        
+        # Preprocess image
         img_array = image.img_to_array(img)
-        img_array = img_array / 255.0
+        img_array = img_array / 255.0  # Normalize to [0, 1]
         img_array = np.expand_dims(img_array, axis=0)
-
-        prediction = model.predict(img_array)
-
+        
+        print(f"Input array shape: {img_array.shape}")
+        
+        # Make prediction
+        prediction = model.predict(img_array, verbose=0)
+        
+        # Validate prediction shape
         if prediction.shape[1] != len(class_names):
             raise HTTPException(
                 status_code=500,
-                detail="Model output size does not match class names"
+                detail=f"Model output size ({prediction.shape[1]}) does not match class names ({len(class_names)})"
             )
-
+        
+        # Get predicted class
         predicted_index = int(np.argmax(prediction))
         confidence = float(np.max(prediction) * 100)
         predicted_species = class_names[predicted_index]
-
-        # Extract genus and get ecological info
-        genus = predicted_species.split(" ")[0]
+        
+        print(f"Predicted: {predicted_species} with confidence: {confidence:.2f}%")
+        
+        # Extract genus (first word of species name)
+        genus = predicted_species.split(" ")[0] if " " in predicted_species else predicted_species
+        
+        # Get ecological information
         info = genus_knowledge_map.get(
             genus,
             {
@@ -155,12 +189,14 @@ async def predict(file: UploadFile = File(...)):
                 "pollution_level": "Unknown"
             }
         )
-
-        # Select primary location (first in list)
+        
+        # Prepare location information
         primary_location = info["locations"][0]
         all_locations = ", ".join(info["locations"])
-
+        
+        # Return comprehensive response
         return {
+            "success": True,
             "species": predicted_species,
             "genus": genus,
             "confidence": round(confidence, 2),
@@ -173,11 +209,21 @@ async def predict(file: UploadFile = File(...)):
             "pollution_level": info["pollution_level"],
             "inference_note": "Ecology inferred using genus-level knowledge from Telangana water bodies"
         }
-
-    except HTTPException as e:
-        raise e
+    
+    except HTTPException as http_error:
+        # Re-raise HTTP exceptions
+        raise http_error
+    
     except Exception as e:
+        # Log error for debugging
+        error_trace = traceback.format_exc()
+        print(f"❌ Prediction error: {str(e)}")
+        print(error_trace)
+        
+        # Return error response (remove trace in production)
         return {
+            "success": False,
             "error": str(e),
-            "trace": traceback.format_exc()
+            "trace": error_trace,
+            "message": "An error occurred during prediction. Please try again with a valid diatom microscopic image."
         }
