@@ -7,6 +7,9 @@ from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing import image
 from PIL import Image
 import io
+from functools import lru_cache
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 # -----------------------------
 # App Initialization
@@ -21,14 +24,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Thread pool for CPU-bound inference tasks
+_executor = ThreadPoolExecutor(max_workers=2)
+
 # -----------------------------
 # Load Model & Class Names
 # -----------------------------
 try:
     model = load_model("best_model.h5", compile=False)
+    # Warm up the model with a dummy prediction to pre-allocate GPU/CPU memory
+    _dummy = np.zeros((1, 224, 224, 3), dtype=np.float32)
+    model.predict(_dummy, verbose=0)
+    del _dummy
+
     with open("class_names.pkl", "rb") as f:
         class_names = pickle.load(f)
-    print("✅ Model loaded successfully")
+
+    # Pre-convert class_names to a tuple for faster indexing
+    class_names = tuple(class_names)
+
+    print("✅ Model loaded and warmed up successfully")
     print("✅ Number of classes:", len(class_names))
     print("✅ Model input shape:", model.input_shape)
 except Exception as e:
@@ -105,6 +120,15 @@ genus_knowledge_map = {
     }
 }
 
+# Pre-build the default fallback info to avoid repeated dict creation
+_DEFAULT_INFO = {
+    "type": "Unknown diatom type",
+    "water_body": "Unknown freshwater body",
+    "locations": ["Various water bodies in Telangana"],
+    "indicator": "Unknown",
+    "pollution_level": "Unknown"
+}
+
 # -----------------------------
 # Root Route
 # -----------------------------
@@ -129,6 +153,27 @@ def health_check():
     }
 
 # -----------------------------
+# CPU-bound preprocessing + inference (runs in thread pool)
+# -----------------------------
+def _preprocess_and_predict(contents: bytes):
+    """Decode, resize, normalize image and run model inference."""
+    # Open and convert image
+    img = Image.open(io.BytesIO(contents))
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+
+    # Resize using BILINEAR (faster than default BICUBIC, sufficient for 224x224)
+    img = img.resize((224, 224), Image.BILINEAR)
+
+    # Convert to float32 array and normalize in one step (avoids double copy)
+    img_array = np.asarray(img, dtype=np.float32) / 255.0
+    img_array = np.expand_dims(img_array, axis=0)  # shape: (1, 224, 224, 3)
+
+    # Run inference
+    prediction = model.predict(img_array, verbose=0)
+    return prediction
+
+# -----------------------------
 # Prediction Route
 # -----------------------------
 @app.post("/predict")
@@ -136,64 +181,51 @@ async def predict(file: UploadFile = File(...)):
     try:
         # Read file contents
         contents = await file.read()
-        
-        # Validate file is an image
+
+        # Validate that the file is an image before passing to the thread pool
         try:
-            img = Image.open(io.BytesIO(contents)).convert("RGB")
+            Image.open(io.BytesIO(contents)).verify()
         except Exception as img_error:
             raise HTTPException(
                 status_code=400,
                 detail=f"Uploaded file is not a valid image. Error: {str(img_error)}"
             )
-        
-        # CRITICAL: Resize to 224x224 to match model training size
-        print(f"Original image size: {img.size}")
-        img = img.resize((224, 224))
-        print(f"Resized image size: {img.size}")
-        
-        # Preprocess image
-        img_array = image.img_to_array(img)
-        img_array = img_array / 255.0  # Normalize to [0, 1]
-        img_array = np.expand_dims(img_array, axis=0)
-        
-        print(f"Input array shape: {img_array.shape}")
-        
-        # Make prediction
-        prediction = model.predict(img_array, verbose=0)
-        
+
+        # Offload CPU-bound work to thread pool so the event loop stays free
+        loop = asyncio.get_event_loop()
+        try:
+            prediction = await loop.run_in_executor(
+                _executor, _preprocess_and_predict, contents
+            )
+        except Exception as pred_error:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Inference failed: {str(pred_error)}"
+            )
+
         # Validate prediction shape
         if prediction.shape[1] != len(class_names):
             raise HTTPException(
                 status_code=500,
                 detail=f"Model output size ({prediction.shape[1]}) does not match class names ({len(class_names)})"
             )
-        
+
         # Get predicted class
         predicted_index = int(np.argmax(prediction))
         confidence = float(np.max(prediction) * 100)
         predicted_species = class_names[predicted_index]
-        
-        print(f"Predicted: {predicted_species} with confidence: {confidence:.2f}%")
-        
+
         # Extract genus (first word of species name)
-        genus = predicted_species.split(" ")[0] if " " in predicted_species else predicted_species
-        
+        space_idx = predicted_species.find(" ")
+        genus = predicted_species[:space_idx] if space_idx != -1 else predicted_species
+
         # Get ecological information
-        info = genus_knowledge_map.get(
-            genus,
-            {
-                "type": "Unknown diatom type",
-                "water_body": "Unknown freshwater body",
-                "locations": ["Various water bodies in Telangana"],
-                "indicator": "Unknown",
-                "pollution_level": "Unknown"
-            }
-        )
-        
+        info = genus_knowledge_map.get(genus, _DEFAULT_INFO)
+
         # Prepare location information
         primary_location = info["locations"][0]
         all_locations = ", ".join(info["locations"])
-        
+
         # Return comprehensive response
         return {
             "success": True,
@@ -209,18 +241,15 @@ async def predict(file: UploadFile = File(...)):
             "pollution_level": info["pollution_level"],
             "inference_note": "Ecology inferred using genus-level knowledge from Telangana water bodies"
         }
-    
+
     except HTTPException as http_error:
-        # Re-raise HTTP exceptions
         raise http_error
-    
+
     except Exception as e:
-        # Log error for debugging
         error_trace = traceback.format_exc()
         print(f"❌ Prediction error: {str(e)}")
         print(error_trace)
-        
-        # Return error response (remove trace in production)
+
         return {
             "success": False,
             "error": str(e),
